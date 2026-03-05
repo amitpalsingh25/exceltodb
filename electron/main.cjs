@@ -1,8 +1,10 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
+const fsSync = require('fs');
 const fs = require('fs/promises');
 const XLSX = require('xlsx');
 const mysql = require('mysql2/promise');
+const { autoUpdater } = require('electron-updater');
 
 const SETTINGS_FILE = 'settings.json';
 const DEFAULT_SETTINGS = {
@@ -28,6 +30,16 @@ const DEFAULT_SETTINGS = {
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 let mainWindow;
+let updateState = {
+  phase: 'idle',
+  text: '',
+  currentVersion: '',
+  latestVersion: '',
+  updateAvailable: false,
+  downloadPercent: 0,
+  releaseUrl: '',
+  downloaded: false,
+};
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception in main process:', error);
@@ -118,6 +130,52 @@ function getErrorMessage(error) {
   return error.message || 'Unknown error';
 }
 
+function getUpdaterErrorMessage(error) {
+  const raw = getErrorMessage(error);
+  const lower = raw.toLowerCase();
+  if (lower.includes('cannot parse releases feed') || lower.includes('unable to find latest version on github') || lower.includes('406')) {
+    return 'Update source is not valid. Publish a non-draft GitHub Release with latest.yml, Setup .exe, and .exe.blockmap assets.';
+  }
+  if (lower.includes('404') || lower.includes('latest release') || lower.includes('cannot find channel') || lower.includes('latest.yml')) {
+    return 'No published update metadata found. Upload latest.yml, Setup .exe, and .exe.blockmap to the latest GitHub Release.';
+  }
+  return raw;
+}
+
+function sanitizeUpdateRepo(repoInput) {
+  const fallback = DEFAULT_SETTINGS.uiConfig.updateRepo;
+  const raw = String(repoInput || '').trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const withoutPrefix = raw.replace(/^https?:\/\/github\.com\//i, '').replace(/^github\.com\//i, '').replace(/\/+$/, '');
+  const parts = withoutPrefix.split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]}/${parts[1]}`;
+  }
+
+  return fallback;
+}
+
+async function configureAutoUpdaterFeed() {
+  const settings = await readSettings();
+  const repo = sanitizeUpdateRepo(settings?.uiConfig?.updateRepo);
+  const feedUrl = `https://github.com/${repo}/releases/latest/download`;
+  autoUpdater.requestHeaders = {
+    Accept: '*/*',
+    'User-Agent': 'KCS-Excel-to-DB-Updater',
+  };
+  autoUpdater.setFeedURL({
+    provider: 'generic',
+    url: feedUrl,
+    channel: 'latest',
+  });
+  setUpdateState({
+    releaseUrl: `https://github.com/${repo}/releases/latest`,
+  });
+}
+
 function normalizeVersion(version) {
   return String(version || '')
     .trim()
@@ -139,6 +197,93 @@ function compareVersions(a, b) {
     }
   }
   return 0;
+}
+
+function broadcastUpdateState() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send('app:update-status', updateState);
+}
+
+function setUpdateState(partial) {
+  updateState = {
+    ...updateState,
+    ...partial,
+    currentVersion: normalizeVersion(app.getVersion()),
+  };
+  broadcastUpdateState();
+}
+
+async function initializeAutoUpdater() {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  await configureAutoUpdaterFeed();
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdateState({
+      phase: 'checking',
+      text: 'Checking for updates...',
+      error: '',
+      downloaded: false,
+      downloadPercent: 0,
+    });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    setUpdateState({
+      phase: 'available',
+      text: `Update available: v${normalizeVersion(info?.version)} (current v${normalizeVersion(app.getVersion())})`,
+      latestVersion: normalizeVersion(info?.version),
+      updateAvailable: true,
+      releaseUrl: info?.releaseNotesUrl || '',
+      downloaded: false,
+      downloadPercent: 0,
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    setUpdateState({
+      phase: 'up-to-date',
+      text: `You are up to date (v${normalizeVersion(app.getVersion())}).`,
+      latestVersion: normalizeVersion(app.getVersion()),
+      updateAvailable: false,
+      downloaded: false,
+      downloadPercent: 0,
+    });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    setUpdateState({
+      phase: 'downloading',
+      text: `Downloading update... ${Math.round(progress?.percent || 0)}%`,
+      downloadPercent: Number(progress?.percent || 0),
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdateState({
+      phase: 'downloaded',
+      text: `Update downloaded (v${normalizeVersion(info?.version)}). Restart to install.`,
+      latestVersion: normalizeVersion(info?.version),
+      updateAvailable: true,
+      downloaded: true,
+      downloadPercent: 100,
+    });
+  });
+
+  autoUpdater.on('error', (error) => {
+    const message = getUpdaterErrorMessage(error);
+    setUpdateState({
+      phase: 'error',
+      text: `Update failed: ${message}`,
+      error: message,
+    });
+  });
 }
 
 async function withDbConnection(dbConfig, callback) {
@@ -167,9 +312,10 @@ async function withDbConnection(dbConfig, callback) {
 }
 
 function createWindow() {
-  const windowIconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.ico')
-    : path.join(__dirname, '..', 'build', 'icon.ico');
+  const candidateIcons = app.isPackaged
+    ? [path.join(process.resourcesPath, 'icon.ico'), path.join(process.resourcesPath, 'KCS-Icon.png')]
+    : [path.join(__dirname, '..', 'build', 'icon.ico'), path.join(__dirname, '..', 'KCS-Icon.png')];
+  const windowIconPath = candidateIcons.find((iconPath) => fsSync.existsSync(iconPath));
 
   mainWindow = new BrowserWindow({
     title: 'KCS Excel to DB',
@@ -181,6 +327,14 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  if (windowIconPath) {
+    mainWindow.setIcon(windowIconPath);
+  }
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    broadcastUpdateState();
   });
 
   if (devServerUrl) {
@@ -236,9 +390,20 @@ function createAppMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName('KCS Excel to DB');
   app.setAppUserModelId('com.woocoders.kcsexceltodb');
+  setUpdateState({
+    phase: 'idle',
+    text: '',
+    currentVersion: normalizeVersion(app.getVersion()),
+    latestVersion: '',
+    updateAvailable: false,
+    downloadPercent: 0,
+    releaseUrl: '',
+    downloaded: false,
+  });
+  await initializeAutoUpdater();
   createAppMenu();
   createWindow();
 
@@ -294,6 +459,13 @@ ipcMain.handle('settings:save-ui-config', async (_event, uiConfig) => {
   const settings = await readSettings();
   settings.uiConfig = sanitizeUiConfig(uiConfig);
   await writeSettings(settings);
+  if (app.isPackaged) {
+    try {
+      await configureAutoUpdaterFeed();
+    } catch (error) {
+      console.error('Failed to reconfigure updater feed:', error);
+    }
+  }
   return settings.uiConfig;
 });
 
@@ -488,6 +660,22 @@ ipcMain.handle('app:open-help-link', async () => {
 });
 
 ipcMain.handle('app:check-updates', async (_event, payload) => {
+  if (app.isPackaged) {
+    try {
+      await configureAutoUpdaterFeed();
+      await autoUpdater.checkForUpdates();
+      return { success: true, ...updateState };
+    } catch (error) {
+      const message = getUpdaterErrorMessage(error);
+      setUpdateState({
+        phase: 'error',
+        text: `Update failed: ${message}`,
+        error: message,
+      });
+      return { success: false, error: message, ...updateState };
+    }
+  }
+
   try {
     const repo = String(payload?.repo || '').trim();
     if (!repo) {
@@ -572,6 +760,46 @@ ipcMain.handle('app:check-updates', async (_event, payload) => {
       error: getErrorMessage(error),
     };
   }
+});
+
+ipcMain.handle('app:get-update-state', async () => ({ ...updateState }));
+
+ipcMain.handle('app:download-update', async () => {
+  if (!app.isPackaged) {
+    return { success: false, error: 'Updater is only available in installed app.' };
+  }
+
+  try {
+    await configureAutoUpdaterFeed();
+    setUpdateState({
+      phase: 'downloading',
+      text: 'Downloading update...',
+      downloadPercent: 0,
+    });
+    await autoUpdater.downloadUpdate();
+    return { success: true, ...updateState };
+  } catch (error) {
+    const message = getUpdaterErrorMessage(error);
+    setUpdateState({
+      phase: 'error',
+      text: `Update download failed: ${message}`,
+      error: message,
+    });
+    return { success: false, error: message, ...updateState };
+  }
+});
+
+ipcMain.handle('app:install-update', async () => {
+  if (!app.isPackaged) {
+    return { success: false, error: 'Updater is only available in installed app.' };
+  }
+
+  setUpdateState({
+    phase: 'installing',
+    text: 'Installing update and restarting...',
+  });
+  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  return { success: true };
 });
 
 ipcMain.handle('db:insert-row', async (_event, payload) => {

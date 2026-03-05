@@ -64,7 +64,14 @@ function App() {
 
   const [uiConfig, setUiConfig] = useState(defaultUiConfig);
   const [uiMessage, setUiMessage] = useState('');
-  const [updateStatus, setUpdateStatus] = useState({ text: '', updateAvailable: false, releaseUrl: '' });
+  const [updateStatus, setUpdateStatus] = useState({
+    phase: 'idle',
+    text: '',
+    updateAvailable: false,
+    downloaded: false,
+    downloadPercent: 0,
+    releaseUrl: '',
+  });
   const [gradientStops, setGradientStops] = useState(defaultGradientStops);
 
   const [excelMeta, setExcelMeta] = useState({ filePath: '', sheetName: '' });
@@ -136,6 +143,31 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasElectronApi) {
+      return undefined;
+    }
+
+    const applyState = (state) => {
+      if (!state) {
+        return;
+      }
+      setUpdateStatus((prev) => ({
+        ...prev,
+        ...state,
+      }));
+    };
+
+    window.electronAPI.getUpdateState().then(applyState).catch(() => {});
+    const unsubscribe = window.electronAPI.onUpdateStatus?.(applyState);
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [hasElectronApi]);
 
   useEffect(() => {
     if (!auth) {
@@ -354,51 +386,71 @@ function App() {
     }
   };
 
-  const onCheckUpdates = async (repoFromArg) => {
-    const repo = String(repoFromArg || uiConfig.updateRepo || '').trim();
-    if (!repo) {
-      setUpdateStatus({
-        text: 'Set GitHub repo first. Example: owner/repo',
-        updateAvailable: false,
-        releaseUrl: '',
-      });
-      return;
-    }
-
-    setUpdateStatus({ text: 'Checking updates...', updateAvailable: false, releaseUrl: '' });
+  const onCheckUpdates = async () => {
+    setUpdateStatus((prev) => ({
+      ...prev,
+      phase: 'checking',
+      text: 'Checking for updates...',
+    }));
 
     try {
-      const result = await window.electronAPI.checkUpdates({ repo });
+      const result = await window.electronAPI.checkUpdates({ repo: uiConfig.updateRepo });
       if (!result?.success) {
-        console.error('Update check failed result:', result);
-        setUpdateStatus({
+        setUpdateStatus((prev) => ({
+          ...prev,
+          phase: 'error',
           text: `Update check failed: ${result?.error || 'Unknown error'}`,
-          updateAvailable: false,
-          releaseUrl: '',
-        });
+        }));
         return;
       }
 
-      if (result.updateAvailable) {
-        setUpdateStatus({
-          text: `Update available: v${result.latestVersion} (current v${result.currentVersion})`,
-          updateAvailable: true,
-          releaseUrl: result.releaseUrl || '',
-        });
-      } else {
-        setUpdateStatus({
-          text: `You are up to date (v${result.currentVersion}).`,
-          updateAvailable: false,
-          releaseUrl: '',
-        });
+      setUpdateStatus((prev) => ({
+        ...prev,
+        ...result,
+        phase: result.phase || (result.updateAvailable ? 'available' : 'up-to-date'),
+        text:
+          result.text ||
+          (result.updateAvailable
+            ? `Update available: v${result.latestVersion} (current v${result.currentVersion})`
+            : `You are up to date (v${result.currentVersion}).`),
+      }));
+    } catch (error) {
+      setUpdateStatus((prev) => ({
+        ...prev,
+        phase: 'error',
+        text: `Update check failed: ${error.message || 'Unknown error'}`,
+      }));
+    }
+  };
+
+  const onDownloadUpdate = async () => {
+    try {
+      const result = await window.electronAPI.downloadUpdate();
+      if (!result?.success) {
+        setUpdateStatus((prev) => ({
+          ...prev,
+          phase: 'error',
+          text: `Update download failed: ${result?.error || 'Unknown error'}`,
+        }));
       }
     } catch (error) {
-      console.error('Update check error:', error);
-      setUpdateStatus({
-        text: `Update check failed: ${error.message || 'Unknown error'}`,
-        updateAvailable: false,
-        releaseUrl: '',
-      });
+      setUpdateStatus((prev) => ({
+        ...prev,
+        phase: 'error',
+        text: `Update download failed: ${error.message || 'Unknown error'}`,
+      }));
+    }
+  };
+
+  const onInstallUpdate = async () => {
+    try {
+      await window.electronAPI.installUpdate();
+    } catch (error) {
+      setUpdateStatus((prev) => ({
+        ...prev,
+        phase: 'error',
+        text: `Install failed: ${error.message || 'Unknown error'}`,
+      }));
     }
   };
 
@@ -444,9 +496,7 @@ function App() {
     if (!auth) {
       return;
     }
-    if (uiConfig.updateRepo?.trim()) {
-      onCheckUpdates(uiConfig.updateRepo);
-    }
+    onCheckUpdates();
   }, [auth]);
 
   const onLogout = () => {
@@ -843,17 +893,25 @@ function App() {
           <section className="card">
             <h2>App Updates</h2>
             <div className="inline-form">
-              <button type="button" onClick={() => onCheckUpdates()}>
+              <button type="button" onClick={onCheckUpdates}>
                 Check for Updates
               </button>
+              {updateStatus.updateAvailable && !updateStatus.downloaded ? (
+                <button type="button" onClick={onDownloadUpdate}>
+                  Download Update
+                </button>
+              ) : null}
+              {updateStatus.downloaded ? (
+                <button type="button" onClick={onInstallUpdate}>
+                  Install and Restart
+                </button>
+              ) : null}
             </div>
-            <p className="hint">Checks updates from the configured official release channel.</p>
-            {updateStatus.text ? <p className={updateStatus.updateAvailable ? 'success' : 'hint'}>{updateStatus.text}</p> : null}
-            {updateStatus.updateAvailable && updateStatus.releaseUrl ? (
-              <button type="button" onClick={() => window.open(updateStatus.releaseUrl, '_blank')}>
-                Open Latest Release
-              </button>
+            <p className="hint">Checks and installs updates in-app.</p>
+            {updateStatus.phase === 'downloading' ? (
+              <p className="hint">Download progress: {Math.round(updateStatus.downloadPercent || 0)}%</p>
             ) : null}
+            {updateStatus.text ? <p className={updateStatus.updateAvailable ? 'success' : 'hint'}>{updateStatus.text}</p> : null}
           </section>
 
           <section className="card">

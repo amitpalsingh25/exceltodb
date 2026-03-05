@@ -15,9 +15,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   insertRow: (payload) => ipcRenderer.invoke('db:insert-row', payload),
   openHelpLink: () => ipcRenderer.invoke('app:open-help-link'),
   checkUpdates: (payload) => ipcRenderer.invoke('app:check-updates', payload),
+  getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),
+  downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
+  installUpdate: () => ipcRenderer.invoke('app:install-update'),
   onNavigate: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('app:navigate', listener);
     return () => ipcRenderer.removeListener('app:navigate', listener);
+  },
+  onUpdateStatus: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('app:update-status', listener);
+    return () => ipcRenderer.removeListener('app:update-status', listener);
   },
 });
