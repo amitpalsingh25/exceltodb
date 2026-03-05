@@ -1,7 +1,7 @@
 {
   "name": "exceltodb",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "productName": "KCS Excel to DB",
   "main": "electron/main.cjs",
   "type": "module",
@@ -29,11 +29,13 @@
     "@vitejs/plugin-react": "^5.1.1",
     "concurrently": "^9.2.1",
     "electron": "^40.7.0",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
-    "electron-builder": "^26.0.12",
     "globals": "^16.5.0",
+    "sharp": "^0.34.5",
+    "to-ico": "^1.1.5",
     "vite": "^7.3.1",
     "wait-on": "^9.0.4"
   },
@@ -49,12 +51,17 @@
       {
         "from": "KCS-Icon.png",
         "to": "KCS-Icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "directories": {
       "output": "release"
     },
     "win": {
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         "nsis",
@@ -62,6 +69,15 @@
       ]
     },
     "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "KCS Excel to DB",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }

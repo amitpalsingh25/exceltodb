@@ -661,7 +661,7 @@ function App() {
       <div className="auth-screen" style={{ ...authBackgroundStyle, ...themeVars }}>
         <div className="auth-overlay" />
         <form className="card auth-card auth-form" onSubmit={onLogin}>
-          <img src="/KCS-Logo.png" alt="KCS Logo" className="auth-logo" />
+          <img src="./KCS-Logo.png" alt="KCS Logo" className="auth-logo" />
           <h1 className="auth-title">KCS Excel to DB</h1>
           <p className="auth-subtitle">Secure Internal Importer</p>
           <div className="auth-fields">
@@ -841,21 +841,11 @@ function App() {
           <section className="card">
             <h2>App Updates</h2>
             <div className="inline-form">
-              <input
-                placeholder="GitHub repo (owner/repo)"
-                value={uiConfig.updateRepo}
-                onChange={(e) =>
-                  setUiConfig((prev) => ({
-                    ...prev,
-                    updateRepo: e.target.value,
-                  }))
-                }
-              />
               <button type="button" onClick={() => onCheckUpdates()}>
                 Check for Updates
               </button>
             </div>
-            <p className="hint">Push new release/tag on this repo to notify clients.</p>
+            <p className="hint">Checks updates from the configured official release channel.</p>
             {updateStatus.text ? <p className={updateStatus.updateAvailable ? 'success' : 'hint'}>{updateStatus.text}</p> : null}
             {updateStatus.updateAvailable && updateStatus.releaseUrl ? (
               <button type="button" onClick={() => window.open(updateStatus.releaseUrl, '_blank')}>

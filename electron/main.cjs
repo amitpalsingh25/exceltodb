@@ -167,11 +167,15 @@ async function withDbConnection(dbConfig, callback) {
 }
 
 function createWindow() {
+  const windowIconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', 'build', 'icon.ico');
+
   mainWindow = new BrowserWindow({
     title: 'KCS Excel to DB',
     width: 1300,
     height: 800,
-    icon: path.join(__dirname, '..', 'KCS-Icon.png'),
+    icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -234,6 +238,7 @@ function createAppMenu() {
 
 app.whenReady().then(() => {
   app.setName('KCS Excel to DB');
+  app.setAppUserModelId('com.woocoders.kcsexceltodb');
   createAppMenu();
   createWindow();
 
