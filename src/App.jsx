@@ -370,6 +370,7 @@ function App() {
     try {
       const result = await window.electronAPI.checkUpdates({ repo });
       if (!result?.success) {
+        console.error('Update check failed result:', result);
         setUpdateStatus({
           text: `Update check failed: ${result?.error || 'Unknown error'}`,
           updateAvailable: false,
@@ -392,6 +393,7 @@ function App() {
         });
       }
     } catch (error) {
+      console.error('Update check error:', error);
       setUpdateStatus({
         text: `Update check failed: ${error.message || 'Unknown error'}`,
         updateAvailable: false,

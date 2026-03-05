@@ -1,7 +1,7 @@
 {
   "name": "exceltodb",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "productName": "KCS Excel to DB",
   "main": "electron/main.cjs",
   "type": "module",

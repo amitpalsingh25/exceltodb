@@ -503,6 +503,45 @@ ipcMain.handle('app:check-updates', async (_event, payload) => {
       },
     });
 
+    const currentVersion = normalizeVersion(app.getVersion());
+
+    if (response.status === 404) {
+      const tagsResponse = await fetch(`https://api.github.com/repos/${repo}/tags?per_page=20`, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+        },
+      });
+
+      if (!tagsResponse.ok) {
+        return {
+          success: false,
+          error: `Could not fetch tags (${tagsResponse.status}).`,
+        };
+      }
+
+      const tags = await tagsResponse.json();
+      const versions = (tags || [])
+        .map((tag) => normalizeVersion(tag?.name || ''))
+        .filter(Boolean)
+        .sort((a, b) => compareVersions(b, a));
+
+      const latestVersion = versions[0];
+      if (!latestVersion) {
+        return {
+          success: false,
+          error: 'No release/tag versions found in this repo.',
+        };
+      }
+
+      return {
+        success: true,
+        currentVersion,
+        latestVersion,
+        updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
+        releaseUrl: `https://github.com/${repo}/releases/tag/v${latestVersion}`,
+      };
+    }
+
     if (!response.ok) {
       return {
         success: false,
@@ -512,7 +551,6 @@ ipcMain.handle('app:check-updates', async (_event, payload) => {
 
     const latest = await response.json();
     const latestVersion = normalizeVersion(latest.tag_name || latest.name || '');
-    const currentVersion = normalizeVersion(app.getVersion());
 
     if (!latestVersion) {
       return {
